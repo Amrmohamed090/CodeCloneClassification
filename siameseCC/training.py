@@ -10,13 +10,21 @@ from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_sc
 
 
 class CodeCloneModel(nn.Module):
-    def __init__(self, model_name: str = "unsloth/Llama-3.2-1B-Instruct-GGUF"):
+    def __init__(self, model_name: str = "microsoft/codebert-base"):
         super(CodeCloneModel, self).__init__()
-        self.model = AutoModel.from_pretrained(model_name)  
+        self.model = AutoModel.from_pretrained(model_name)
+        self.classifier = nn.Linear(self.model.config.hidden_size, 1)  
+
 
     def forward(self, input_ids, attention_mask):
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        return outputs.logits
+        # Use the CLS token's representation (typically at index 0) for classification
+        cls_token_output = outputs.last_hidden_state[:, 0, :]  # Shape: [batch_size, hidden_size]
+        
+        # Pass through the classifier to get a single logit per sample
+        logits = self.classifier(cls_token_output)  # Shape: [batch_size, 1]
+        
+        return logits.squeeze(-1)  # Shape: [batch_size]
 
 
 def evaluate_model(model, data_loader, criterion, device):
@@ -32,12 +40,21 @@ def evaluate_model(model, data_loader, criterion, device):
             labels = batch['label'].to(device)
 
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            loss = criterion(outputs.squeeze(), labels)
+
+            # Ensure outputs and labels are the same shape
+            outputs = outputs.view(-1)  # Reshape outputs to [batch_size]
+            labels = labels.view(-1)    # Reshape labels to [batch_size]
+            
+            loss = criterion(outputs, labels)
             total_loss += loss.item()
 
             all_labels.extend(labels.tolist())
-            all_outputs.extend(torch.sigmoid(outputs).squeeze().tolist())
+            all_outputs.extend(torch.sigmoid(outputs).tolist())  # Apply sigmoid to get probabilities
+            for o, l in zip(all_outputs, all_labels):
+                print(o,l)
 
+    #print("all labels", all_labels)
+    #print("all outputs", all_outputs)
     avg_loss = total_loss / len(data_loader)
     f1 = f1_score(all_labels, [1 if x >= 0.5 else 0 for x in all_outputs])
     accuracy = accuracy_score(all_labels, [1 if x >= 0.5 else 0 for x in all_outputs])
@@ -104,17 +121,20 @@ def main():
     
     train_loader, val_loader, test_loader = get_dataloaders(
         engine,
-        batch_size=4,
-        train_ratio=0.8,
-        val_ratio=0.1,
-        tokenizer_name="unsloth/Llama-3.2-1B-Instruct-GGUF",
-        max_length=4096,
+        batch_size=16,
+        train_ratio=0.6,
+        val_ratio=0.2,
+        tokenizer_name="microsoft/codebert-base",
+        max_length=512,
         num_workers=0
     )
     
+    print("working with cuda") if torch.cuda.is_available() else print("working with cpu")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CodeCloneModel().to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-6, weight_decay=1e-2)
+
     criterion = nn.BCEWithLogitsLoss()
 
     training_history = train_model(
@@ -125,7 +145,7 @@ def main():
         optimizer,
         criterion,
         device,
-        num_epochs=5
+        num_epochs=10
     )
 
     for epoch_data in training_history:
