@@ -1,4 +1,4 @@
-# BigCloneBench Setup Guide
+# Setup Guide
 
 ## Prerequisites
 - PostgreSQL installed and running
