@@ -52,4 +52,3 @@ If you encounter authentication issues:
 
 ## Additional Resources
 - [BigCloneBench Repository](https://github.com/clonebench/BigCloneBench)
-- PostgreSQL Documentation
