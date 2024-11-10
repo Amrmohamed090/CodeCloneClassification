@@ -50,8 +50,6 @@ def evaluate_model(model, data_loader, criterion, device):
 
             all_labels.extend(labels.tolist())
             all_outputs.extend(torch.sigmoid(outputs).tolist())  # Apply sigmoid to get probabilities
-    #print("all labels", all_labels)
-    #print("all outputs", all_outputs)
     avg_loss = total_loss / len(data_loader)
     f1 = f1_score(all_labels, [1 if x >= 0.5 else 0 for x in all_outputs])
     accuracy = accuracy_score(all_labels, [1 if x >= 0.5 else 0 for x in all_outputs])
@@ -118,7 +116,7 @@ def main():
     
     train_loader, val_loader, test_loader = get_dataloaders(
         engine,
-        batch_size=32,
+        batch_size=4,
         train_ratio=0.6,
         val_ratio=0.2,
         tokenizer_name="microsoft/codebert-base",
@@ -142,7 +140,7 @@ def main():
         optimizer,
         criterion,
         device,
-        num_epochs=1
+        num_epochs=3
     )
 
     for epoch_data in training_history:
