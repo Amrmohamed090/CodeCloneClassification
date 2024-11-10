@@ -50,9 +50,6 @@ def evaluate_model(model, data_loader, criterion, device):
 
             all_labels.extend(labels.tolist())
             all_outputs.extend(torch.sigmoid(outputs).tolist())  # Apply sigmoid to get probabilities
-            for o, l in zip(all_outputs, all_labels):
-                print(o,l)
-
     #print("all labels", all_labels)
     #print("all outputs", all_outputs)
     avg_loss = total_loss / len(data_loader)
@@ -121,7 +118,7 @@ def main():
     
     train_loader, val_loader, test_loader = get_dataloaders(
         engine,
-        batch_size=16,
+        batch_size=32,
         train_ratio=0.6,
         val_ratio=0.2,
         tokenizer_name="microsoft/codebert-base",
@@ -145,7 +142,7 @@ def main():
         optimizer,
         criterion,
         device,
-        num_epochs=10
+        num_epochs=1
     )
 
     for epoch_data in training_history:

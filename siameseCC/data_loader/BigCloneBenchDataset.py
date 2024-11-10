@@ -24,7 +24,7 @@ class NaiveFullCodeCloneDataset(Dataset):
             c.function_id_two,
             1 AS is_clone
         FROM clones c
-        WHERE c.similarity_token <= 0.6
+        WHERE c.similarity_token <= 0.8
         LIMIT 10000;
         
         """
@@ -34,7 +34,6 @@ class NaiveFullCodeCloneDataset(Dataset):
             fp.function_id_two,
             0 AS is_clone
         FROM false_positives fp
-        LIMIT 10000;
 
         """
         
@@ -67,28 +66,34 @@ class NaiveFullCodeCloneDataset(Dataset):
             elif func1 in test_ids and func2 in test_ids:
                 test_data.append((func1, func2, label))
 
-        # Collect all unique function IDs For negative pairs
-        function_ids = set([func1 for func1, _, _ in false_positives] + [func2 for _, func2, _ in false_positives])
-        function_ids = list(function_ids)
-        random.shuffle(function_ids)
+        train_data_false , val_data_false ,test_data_false = [], [], []
 
-        # Split function IDs for train, validation, and test sets
-        num_train = int(len(function_ids) * self.train_ratio)
-        num_val = int(len(function_ids) * self.val_ratio)
-        train_ids_false = set(function_ids[:num_train])
-        val_ids_false = set(function_ids[num_train:num_train + num_val])
-        test_ids_false = set(function_ids[num_train + num_val:])
+        counter = 0
 
-        for func1, func2, label in clone_pairs:
-            if func1 in train_ids_false and func2 in train_ids_false:
-                train_data.append((func1, func2, label))
-            elif func1 in val_ids_false and func2 in val_ids_false:
-                val_data.append((func1, func2, label))
-            elif func1 in test_ids_false and func2 in test_ids_false:
-                test_data.append((func1, func2, label))
+        while len(train_data_false) < len(train_data) and counter < len(false_positives):
+            func1, func2, label = false_positives[counter]
+            if func1 not in test_ids and func2 not in test_ids and func1 not in val_ids and func2 not in val_ids:
+                train_data_false.append((func1, func2, label))
+            counter+=1
 
-  
+        while len(val_data_false) < len(val_data) and counter < len(false_positives):
+            func1, func2, label = false_positives[counter]
+            if func1 not in test_ids and func2 not in test_ids and func1 not in train_ids and func2 not in train_ids:
+                val_data_false.append((func1, func2, label))
+            counter +=1
+
+        while len(test_data_false) < len(test_data) and counter < len(false_positives):
+            func1, func2, label = false_positives[counter]
+            if func1 not in train_ids and func2 not in train_ids and func1 not in val_ids and func2 not in val_ids:
+                test_data_false.append((func1, func2, label))
+            counter +=1
+        print(len(train_data_false))
+        print(len(test_data_false))
+        print(len(val_data_false))
         # Print statistics for verification
+        train_data += train_data_false
+        test_data += test_data_false
+        val_data += val_data_false
         print("\nDataset statistics:")
         for name, dataset in [("Train", train_data), ("Validation", val_data), ("Test", test_data)]:
             clones = sum(1 for _, _, label in dataset if label == 1)
@@ -96,7 +101,9 @@ class NaiveFullCodeCloneDataset(Dataset):
             print(f"{name}: Total={len(dataset)}, Clones={clones}, Non-clones={non_clones}")
 
         train_data, val_data, test_data = self.check_data_leakage( train_data, val_data, test_data)
-
+        random.shuffle(train_data)
+        random.shuffle(val_data)
+        random.shuffle(test_data)
         return train_data, val_data, test_data
     
     def check_data_leakage(self, train_data, val_data, test_data):
@@ -106,47 +113,65 @@ class NaiveFullCodeCloneDataset(Dataset):
             for id1, id2, _ in data:
                 id_set.add(id1)
                 id_set.add(id2)
-
             return id_set
         
         train_ids = create_id_set(train_data)
-        val_ids =  create_id_set(val_ids)
-        test_ids =  create_id_set(test_ids)
-        # Identify overlaps
-        val_in_train = val_ids.intersection(train_ids)
-        test_in_val = test_ids.intersection(val_ids)
-        test_in_train = test_ids.intersection(train_ids)
+        val_ids = create_id_set(val_data)
+        test_ids = create_id_set(test_data)
 
-        # Count original data sizes
+        # Find overlapping IDs
+        train_val_overlap = train_ids.intersection(val_ids)
+        val_test_overlap = val_ids.intersection(test_ids)
+        train_test_overlap = train_ids.intersection(test_ids)
+
+        # Count original sizes
         original_train_size = len(train_data)
         original_val_size = len(val_data)
         original_test_size = len(test_data)
 
-        # Filter out any rows with overlapping IDs
-        train_data = [row for row in train_data if row[0] not in val_in_train and row[1] not in val_in_train and row[0] not in test_in_train and row[1] not in test_in_train]
-        val_data = [row for row in val_data if row[0] not in test_in_val and row[1] not in test_in_val and row[0] not in val_in_train and row[1] not in val_in_train]
-        test_data = [row for row in test_data if row[0] not in test_in_val and row[1] not in test_in_val and row[0] not in test_in_train and row[1] not in test_in_train]
+        # Filter out pairs where BOTH functions appear in another set
+        clean_train = []
+        clean_val = []
+        clean_test = []
 
-        # Calculate number of rows removed
-        removed_train = original_train_size - len(train_data)
-        removed_val = original_val_size - len(val_data)
-        removed_test = original_test_size - len(test_data)
+        # Clean training data
+        for row in train_data:
+            id1, id2, label = row
+            if not (id1 in train_val_overlap and id2 in train_val_overlap) and \
+            not (id1 in train_test_overlap and id2 in train_test_overlap):
+                clean_train.append(row)
 
-        # Print warning for removed rows
+        # Clean validation data
+        for row in val_data:
+            id1, id2, label = row
+            if not (id1 in train_val_overlap and id2 in train_val_overlap) and \
+            not (id1 in val_test_overlap and id2 in val_test_overlap):
+                clean_val.append(row)
+
+        # Clean test data
+        for row in test_data:
+            id1, id2, label = row
+            if not (id1 in train_test_overlap and id2 in train_test_overlap) and \
+            not (id1 in val_test_overlap and id2 in val_test_overlap):
+                clean_test.append(row)
+
+        # Calculate removals
+        removed_train = original_train_size - len(clean_train)
+        removed_val = original_val_size - len(clean_val)
+        removed_test = original_test_size - len(clean_test)
+
         print(f"\nWarning: Rows removed due to overlapping IDs:")
         print(f"Train set: {removed_train} rows removed")
         print(f"Validation set: {removed_val} rows removed")
         print(f"Test set: {removed_test} rows removed")
 
-        # Print summary of the cleaned data
-        print("\nCleaned Dataset statistics (after removing overlapping IDs):")
-        for name, dataset in [("Train", train_data), ("Validation", val_data), ("Test", test_data)]:
+        print("\nCleaned Dataset statistics:")
+        for name, dataset in [("Train", clean_train), ("Validation", clean_val), ("Test", clean_test)]:
             clones = sum(1 for _, _, label in dataset if label == 1)
             non_clones = sum(1 for _, _, label in dataset if label == 0)
             print(f"{name}: Total={len(dataset)}, Clones={clones}, Non-clones={non_clones}")
 
-        return train_data, val_data, test_data
-
+        return clean_train, clean_val, clean_test
 
 
 
